@@ -1,9 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
 Simple tool to extract a melody from .mid file suitable
-to played back using pwm on a raspberry pi
+to be played back using pwm.py on a raspberry pi
 
 Tip: use 
 timidity <midi-file> 
-for playback
+for playback .mid files
 
 Dependencies: 
 mido
