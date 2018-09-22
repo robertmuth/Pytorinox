@@ -36,7 +36,6 @@ class Buzzer(object):
 if __name__ == '__main__':
     GPIO.setmode(GPIO.BOARD)
 
-    # generated with midi.py from Midi/fuer_elise.mid
     _FUER_ELISE = [
         (659.255, 240),
         (622.254, 240),
