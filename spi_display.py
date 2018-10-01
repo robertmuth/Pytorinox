@@ -19,6 +19,8 @@ Demo/Test (you will likely need to confiure it):
 ./oled.py
 """
 
+import time
+
 # spidev and RPi.GPIO are necessary to instantiate a SpiDevice
 # But it is possible to provide your own object that behaves
 # like an SpiDevice.
@@ -32,9 +34,7 @@ try:
 except:
     print("GPIO lib not available")
 
-
 from PIL import Image, ImageDraw, ImageFont
-
 
 # common
 SETREMAP = 0xA0
@@ -76,15 +76,19 @@ class SpiDevice(object):
     """SpiDevice enacapsulates the communiacation with an SPI device.
     """
 
-    def __init__(self, device, port, dc_pin=24, reset_pin=25, max_speed_hz=1000 * 1000, transfer_size=4096):
+    def __init__(self, device, port, dc_pin=24, reset_pin=25, busy_pin=None, max_speed_hz=1000 * 1000,
+                 transfer_size=4096):
         assert max_speed_hz in _SPEEDS
         self._transfer_size = transfer_size
         self._dc = dc_pin
         self._rst = reset_pin
+        self._busy = busy_pin
         if self._dc is not None:
             GPIO.setup(self._dc, GPIO.OUT)
         if self._rst is not None:
             GPIO.setup(self._rst, GPIO.OUT)
+        if self._busy is not None:
+            GPIO.setup(self._busy, GPIO.IN)
         self.reset()
         self._spi = spidev.SpiDev()
         self._spi.open(device, port)
@@ -94,12 +98,14 @@ class SpiDevice(object):
     def reset(self):
         if self._rst is not None:
             GPIO.output(self._rst, GPIO.LOW)  # Reset device
+            time.sleep(0.2)
             GPIO.output(self._rst, GPIO.HIGH)  # Keep RESET pulled high
+            time.sleep(0.2)
 
     def write_data(self, data: bytes):
         if self._dc is not None:
             GPIO.output(self._dc, GPIO.HIGH)
-        #print ("CMD", len(data), list(data))
+        # print ("CMD", len(data), list(data))
         i = 0
         n = len(data)
         tx_sz = self._transfer_size
@@ -114,6 +120,10 @@ class SpiDevice(object):
         # print ("DATA", len(data), list(data))
         # This should accept bytes
         self._spi.writebytes(list(data))
+
+    def wait_until_idle(self, delay_sec=0.1):
+        while GPIO.input(self._busy):
+            time.sleep(delay_sec)
 
 
 def _SSD1306_FramebufferUpdateData(w, h, image: Image):
@@ -163,21 +173,21 @@ class SSD1306(object):
         pages = h // 8
         self._update_cmd = bytes([
             COLUMNADDR, colstart, colstart + w - 1,
-            PAGEADDR, 0,  pages - 1,
+            PAGEADDR, 0, pages - 1,
         ])
         init_cmd = bytes([
             DISPLAYOFF,
             SETDISPLAYCLOCKDIV, settings['displayclockdiv'],
-            SETMULTIPLEX,       settings['multiplex'],
-            SETDISPLAYOFFSET,   0x00,
+            SETMULTIPLEX, settings['multiplex'],
+            SETDISPLAYOFFSET, 0x00,
             SETSTARTLINE,
-            CHARGEPUMP,         0x14,
-            MEMORYMODE,         0x00,
+            CHARGEPUMP, 0x14,
+            MEMORYMODE, 0x00,
             SETSEGMENTREMAP,
             COMSCANDEC,
-            SETCOMPINS,         settings['compins'],
-            SETPRECHARGE,       0xF1,
-            SETVCOMDETECT,      0x40,
+            SETCOMPINS, settings['compins'],
+            SETPRECHARGE, 0xF1,
+            SETVCOMDETECT, 0x40,
             DISPLAYALLON_RESUME,
             NORMALDISPLAY,
             SETCONTRAST, 207,
@@ -220,21 +230,21 @@ class SSD1327(object):
             0x75, 0, self._h - 1,
         ])
         init_cmd = bytes([
-            DISPLAYOFF,         # Display off (all pixels off)
+            DISPLAYOFF,  # Display off (all pixels off)
             # gment remap (com split, com remap, nibble remap, column remap)
             SETREMAP, 0x53,
-            0xA1, 0x00,         # Display start line
-            0xA2, 0x00,         # Display offset
-            DISPLAYALLON_RESUME,        # regular display
-            SETMULTIPLEX, 0x7F,         # set multiplex ratio: 127
-            0xB8, 0x01, 0x11, 0x22, 0x32, 0x43, 0x54, 0x65, 0x76,   # Set greyscale table
-            0xB3, 0x00,         # Front clock divider: 0, Fosc: 0
-            0xAB, 0x01,         # Enable Internal Vdd
-            0xB1, 0xF1,         # Set phase periods - 1: 1 clk, 2: 15 clks
-            0xBC, 0x08,         # Pre-charge voltage: Vcomh
-            0xBE, 0x07,         # COM deselect voltage level: 0.86 x Vcc
-            0xD5, 0x62,         # Enable 2nd pre-charge
-            0xB6, 0x0F,         # 2nd Pre-charge period: 15 clks
+            0xA1, 0x00,  # Display start line
+            0xA2, 0x00,  # Display offset
+            DISPLAYALLON_RESUME,  # regular display
+            SETMULTIPLEX, 0x7F,  # set multiplex ratio: 127
+            0xB8, 0x01, 0x11, 0x22, 0x32, 0x43, 0x54, 0x65, 0x76,  # Set greyscale table
+            0xB3, 0x00,  # Front clock divider: 0, Fosc: 0
+            0xAB, 0x01,  # Enable Internal Vdd
+            0xB1, 0xF1,  # Set phase periods - 1: 1 clk, 2: 15 clks
+            0xBC, 0x08,  # Pre-charge voltage: Vcomh
+            0xBE, 0x07,  # COM deselect voltage level: 0.86 x Vcc
+            0xD5, 0x62,  # Enable 2nd pre-charge
+            0xB6, 0x0F,  # 2nd Pre-charge period: 15 clks
             SETCONTRAST, 127,
         ])
         self._dev.write_cmd(init_cmd)
@@ -286,17 +296,17 @@ class SH1106(object):
         init_cmd = bytes([
             DISPLAYOFF,
             MEMORYMODE,
-            SETHIGHCOLUMN,      0xB0, 0xC8,
-            SETLOWCOLUMN,       0x10, 0x40,
+            SETHIGHCOLUMN, 0xB0, 0xC8,
+            SETLOWCOLUMN, 0x10, 0x40,
             SETSEGMENTREMAP,
             NORMALDISPLAY,
-            SETMULTIPLEX,       settings['multiplex'],
+            SETMULTIPLEX, settings['multiplex'],
             DISPLAYALLON_RESUME,
-            SETDISPLAYOFFSET,   settings['displayoffset'],
+            SETDISPLAYOFFSET, settings['displayoffset'],
             SETDISPLAYCLOCKDIV, 0xF0,
-            SETPRECHARGE,       0x22,
-            SETCOMPINS,         0x12,
-            SETVCOMDETECT,      0x20,
+            SETPRECHARGE, 0x22,
+            SETCOMPINS, 0x12,
+            SETVCOMDETECT, 0x20,
             SETCONTRAST, 127,
         ])
         self._dev.write_cmd(init_cmd)
@@ -317,11 +327,115 @@ class SH1106(object):
         self._dev.write_cmd(bytes([DISPLAYOFF]))
 
 
+# EPD2IN9 commands
+DRIVER_OUTPUT_CONTROL = 0x01
+BOOSTER_SOFT_START_CONTROL = 0x0C
+GATE_SCAN_START_POSITION = 0x0F
+DEEP_SLEEP_MODE = 0x10
+DATA_ENTRY_MODE_SETTING = 0x11
+SW_RESET = 0x12
+TEMPERATURE_SENSOR_CONTROL = 0x1A
+MASTER_ACTIVATION = 0x20
+DISPLAY_UPDATE_CONTROL_1 = 0x21
+DISPLAY_UPDATE_CONTROL_2 = 0x22
+WRITE_RAM = 0x24
+WRITE_VCOM_REGISTER = 0x2C
+WRITE_LUT_REGISTER = 0x32
+SET_DUMMY_LINE_PERIOD = 0x3A
+SET_GATE_TIME = 0x3B
+BORDER_WAVEFORM_CONTROL = 0x3C
+SET_RAM_X_ADDRESS_START_END_POSITION = 0x44
+SET_RAM_Y_ADDRESS_START_END_POSITION = 0x45
+SET_RAM_X_ADDRESS_COUNTER = 0x4E
+SET_RAM_Y_ADDRESS_COUNTER = 0x4F
+TERMINATE_FRAME_READ_WRITE = 0xFF
+
+_lut_partial_update = [
+    0x10, 0x18, 0x18, 0x08, 0x18, 0x18, 0x08, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x13, 0x14, 0x44, 0x12,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+]
+
+
+def _IL3820_FramebufferUpdateData(image: Image):
+    buf = bytearray(len(image.getdata()) // 8)
+    pix8 = 0
+    for n, x in enumerate(image.getdata()):
+        pix8 <<= 1
+        if x:
+            pix8 |= 1
+        if n & 0x7 == 7:
+            buf[n >> 3] = pix8
+            pix8 = 0
+    return buf
+
+
+# https://www.waveshare.com/wiki/2.9inch_e-Paper_Module
+# https://www.smart-prototyping.com/image/data/9_Modules/EinkDisplay/GDE029A1/IL3820.pdf
+class IL3820:
+
+    def __init__(self, dev: SpiDevice, width=128, height=296):
+        self._dev = dev
+        self.width = width
+        self.height = height
+        self._dev.reset()
+        h = self.height - 1
+        self.send_command(DRIVER_OUTPUT_CONTROL, [h & 0xff, h >> 8, 0])
+        self.send_command(BOOSTER_SOFT_START_CONTROL, [0xD7, 0xD6, 0x9D])
+        self.send_command(WRITE_VCOM_REGISTER, [0xa8])  # VCOM 7C
+        self.send_command(SET_DUMMY_LINE_PERIOD, [0x1A])  # 4 dummy lines per gate
+        self.send_command(SET_GATE_TIME, [0x08])  # 2us per line
+        self.send_command(DATA_ENTRY_MODE_SETTING, [0x03])  # X increment Y increment
+        self.send_command(WRITE_LUT_REGISTER, _lut_partial_update)
+        self._set_memory_area(0, 0, self.width - 1, self.height - 1)
+        self._set_memory_pointer(0, 0)
+
+    def send_command(self, command, data=None):
+        self._dev.write_cmd(bytes([command]))
+        if data:
+            self._dev.write_data(bytes(data))
+
+    def update(self, image):
+        # TODO: implement partial updates
+        assert image.mode == "1"
+        assert image.size == (self.width, self.height)
+
+        self._dev.wait_until_idle()
+        self.send_command(WRITE_RAM)
+        self._dev.write_data(_IL3820_FramebufferUpdateData(image))
+        self._display_frame()
+
+    def _display_frame(self):
+        self.send_command(DISPLAY_UPDATE_CONTROL_2, [0xC4])
+        self.send_command(MASTER_ACTIVATION)
+        self.send_command(TERMINATE_FRAME_READ_WRITE)
+
+    def _set_memory_area(self, x_start, y_start, x_end, y_end):
+        # x point must be the multiple of 8 or the last 3 bits will be ignored
+        self.send_command(SET_RAM_X_ADDRESS_START_END_POSITION, [x_start >> 3, x_end >> 3])
+        self.send_command(SET_RAM_Y_ADDRESS_START_END_POSITION,
+                          [y_start & 0xFF, y_start >> 8, y_end & 0xFF, y_end >> 8])
+
+    def _set_memory_pointer(self, x, y):
+        # x point must be the multiple of 8 or the last 3 bits will be ignored
+        self.send_command(SET_RAM_X_ADDRESS_COUNTER, [x >> 3])
+        self.send_command(SET_RAM_Y_ADDRESS_COUNTER, [y & 0xff, y >> 8])
+
+    def sleep(self):
+        self.send_command(DEEP_SLEEP_MODE)
+
+    def on(self):
+        pass
+
+    def off(self):
+        pass
+
+
 if __name__ == "__main__":
     import os
     import datetime
     import time
-    import sys
 
     GPIO.setmode(GPIO.BOARD)
     FRAMES = 100
@@ -329,7 +443,12 @@ if __name__ == "__main__":
     cwd = os.path.dirname(__file__)
     FONT = ImageFont.truetype(cwd + "/Fonts/code2000.ttf", 25)
     # CONFIG = (128, 64, SH1106)
-    CONFIG = (128, 64, SSD1306)
+    # CONFIG = (128, 64, SSD1306)
+    # DEV = SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22)
+    CONFIG = (128, 296, IL3820)
+    DEV = SpiDevice(device=0, port=0, dc_pin=22, reset_pin=11, busy_pin=18,
+                    max_speed_hz=2000 * 1000)
+
 
     def main():
         w, h, driver_class = CONFIG
@@ -344,8 +463,7 @@ if __name__ == "__main__":
         draw.text((0, 30), today_date, fill="#333", font=FONT)
 
         print("create spi and display devices")
-        dev = SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22)
-        display = driver_class(dev, w, h)
+        display = driver_class(DEV, w, h)
         display.on()
 
         # simple benchmark
@@ -355,8 +473,9 @@ if __name__ == "__main__":
             display.update(image)
             time.sleep(0.001)
             stop = time.time()
-        print ("msec/frame", 1000.0 * (stop - start) / FRAMES)
+        print("msec/frame", 1000.0 * (stop - start) / FRAMES)
         time.sleep(2)
         display.off()
+
 
     main()

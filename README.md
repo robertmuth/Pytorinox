@@ -26,15 +26,17 @@ how to use it:
 
 * framebuffer.py - render an Image into a linux framebuffer device
 
+* l3g4200d.py - 3 axis gyroscope
+
 * midi.py - extract simple melodies from midi files for use with buzzer.py 
 
 * menu.py - scrollable menus rendered into an Image 
 
 * morph.py - dali clock style text morphing 
 
-* oled.py - render an image on an SPI display (supports several OLED drivers)   
-
 * rotary_encoder.py - decoder for rotary encoder switches
+
+* spi_display.py - render an image on an SPI display (supports several OLED, TFT and E-Ink drivers)   
 
 * tts.py - text-to-speech via external tools (`pico2wave`, `aplay`)
 
@@ -54,8 +56,17 @@ For alternative licensing please contact the author.
 All helper files are stand-alone, meaning they do not depend
 on other helpers.
 
-Some helper may depend on certain base libraries like `Image`, `GPIO`, `smbus` and 
-standard tools like `aplay`, `pico2wave`
+Some helper may depend on certain base libraries like 
+
+* [Image](https://pillow.readthedocs.io)
+* [GPIO](https://pypi.org/project/RPi.GPIO/)
+* [smbus](https://pypi.org/project/smbus2/)
+* [evdev](https://python-evdev.readthedocs.io)
+
+and standard tools like 
+
+* aplay
+* pico2wave
   
 ## Author
 

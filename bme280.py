@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # cf.: https://github.com/BoschSensortec/BME280_driver/
-
+#      https://cdn.sparkfun.com/assets/learn_tutorials/4/1/9/BST-BME280_DS001-10.pdf
 import smbus
 import time
 import struct
@@ -165,6 +165,7 @@ class SensorBME280:
     def __init__(self, bus=smbus.SMBus(1), addr=0x76, interval=60):
         self._bus = bus
         self._addr = addr
+        assert bus.read_byte_data(addr, BME280_REGISTER_CHIPID) == 0x60
         self._interval = interval
         self._hcal, self._pcal, self._tcal = ReadCalibrationData(bus, addr)
         SetMode(bus, addr)
