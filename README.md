@@ -18,7 +18,7 @@ how to use it:
 
 * audio_aplay.py - play back wave sound via external tool (`aplay`)
 
-* bme280.py - read temperature, humidity and pressure from bme280 sensor
+* bme280.py - read temperature, humidity and pressure from bme280 sensor (i2c)
 
 * buzzer.py  - play simple melodies via pwm
 
@@ -26,7 +26,7 @@ how to use it:
 
 * framebuffer.py - render an Image into a linux framebuffer device
 
-* l3g4200d.py - 3 axis gyroscope
+* l3g4200d.py - 3 axis gyroscope (i2c)
 
 * midi.py - extract simple melodies from midi files for use with buzzer.py 
 
@@ -37,6 +37,8 @@ how to use it:
 * rotary_encoder.py - decoder for rotary encoder switches
 
 * spi_display.py - render an image on an SPI display (supports several OLED, TFT and E-Ink drivers)   
+
+* ttp229.py - capacitive touch sensor (i2c)
 
 * tts.py - text-to-speech via external tools (`pico2wave`, `aplay`)
 

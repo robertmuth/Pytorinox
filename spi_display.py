@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Simple oled libray - supports display updates from a PIL.Image
+Simple SPI display helper supports updates from a PIL.Image
 for the following drivers:
 
 SSD1306
 SSD1327
 SH1106
+IL3820
 
 A lot of the code was inspired by Richard Hull's excellent luma.oled library.
 
@@ -15,8 +16,8 @@ Optional Dependencies:
 spidev
 RPi.GPIO 
 
-Demo/Test (you will likely need to confiure it):
-./oled.py
+Demo/Test (you will likely need to configure it):
+./spi_display.py
 """
 
 import time
@@ -168,6 +169,7 @@ class SSD1306(object):
         self._dev = dev
         self._w = w
         self._h = h
+        self.size = (w, h)
         settings = _SSD1306_SETTINGS.get((w, h))
         colstart = (0x80 - w) // 2
         pages = h // 8
@@ -194,7 +196,7 @@ class SSD1306(object):
         ])
         self._dev.write_cmd(init_cmd)
 
-    def update(self, image: Image):
+    def show(self, image: Image):
         data = _SSD1306_FramebufferUpdateData(self._w, self._h, image)
         self._dev.write_cmd(self._update_cmd)
         self._dev.write_data(data)
@@ -216,7 +218,7 @@ def _SSD1327_FramebufferUpdateData(image):
         if i & 1 == 0:
             nibble = (pix >> 4)
         else:
-            out[i // 2] = nibble | pix & (0xf0)
+            out[i // 2] = nibble | pix & 0xf0
     return out
 
 
@@ -225,6 +227,7 @@ class SSD1327(object):
         self._dev = dev
         self._w = 128
         self._h = 128
+        self.size = (self._w, self._h)
         self._update_cmd = bytes([
             0x15, 0, self._w - 1,
             0x75, 0, self._h - 1,
@@ -249,7 +252,7 @@ class SSD1327(object):
         ])
         self._dev.write_cmd(init_cmd)
 
-    def update(self, image: Image):
+    def show(self, image: Image):
         data = _SSD1327_FramebufferUpdateData(image)
         self._dev.write_cmd(self._update_cmd)
         self._dev.write_data(data)
@@ -275,7 +278,6 @@ def _SH1106_FramebufferUpdateData(image):
     buf = bytearray(w * h // 8)
     # A page consists of 8 pixel rows
     page_size_pixels = 8 * w
-    o = 0
     for i in range(0, w * h, page_size_pixels):
         o = i // 8
         for j in range(w):
@@ -292,6 +294,7 @@ class SH1106(object):
         self._dev = dev
         self._w = w
         self._h = h
+        self.size = (w, h)
         settings = _SH1106_SETTINGS.get((w, h))
         init_cmd = bytes([
             DISPLAYOFF,
@@ -311,7 +314,7 @@ class SH1106(object):
         ])
         self._dev.write_cmd(init_cmd)
 
-    def update(self, image: Image):
+    def show(self, image: Image):
         data = _SH1106_FramebufferUpdateData(image)
         page_size_bytes = image.size[0]
         update_cmd = bytearray([0xB0, 0x02, 0x10])
@@ -375,55 +378,56 @@ def _IL3820_FramebufferUpdateData(image: Image):
 # https://www.smart-prototyping.com/image/data/9_Modules/EinkDisplay/GDE029A1/IL3820.pdf
 class IL3820:
 
-    def __init__(self, dev: SpiDevice, width=128, height=296):
+    def __init__(self, dev: SpiDevice, w=128, h=296):
         self._dev = dev
-        self.width = width
-        self.height = height
+        self._w = w
+        self._h = h
+        self.size = (w, h)
         self._dev.reset()
-        h = self.height - 1
-        self.send_command(DRIVER_OUTPUT_CONTROL, [h & 0xff, h >> 8, 0])
-        self.send_command(BOOSTER_SOFT_START_CONTROL, [0xD7, 0xD6, 0x9D])
-        self.send_command(WRITE_VCOM_REGISTER, [0xa8])  # VCOM 7C
-        self.send_command(SET_DUMMY_LINE_PERIOD, [0x1A])  # 4 dummy lines per gate
-        self.send_command(SET_GATE_TIME, [0x08])  # 2us per line
-        self.send_command(DATA_ENTRY_MODE_SETTING, [0x03])  # X increment Y increment
-        self.send_command(WRITE_LUT_REGISTER, _lut_partial_update)
-        self._set_memory_area(0, 0, self.width - 1, self.height - 1)
+        h = self._h - 1
+        self._send_command(DRIVER_OUTPUT_CONTROL, [h & 0xff, h >> 8, 0])
+        self._send_command(BOOSTER_SOFT_START_CONTROL, [0xD7, 0xD6, 0x9D])
+        self._send_command(WRITE_VCOM_REGISTER, [0xa8])  # VCOM 7C
+        self._send_command(SET_DUMMY_LINE_PERIOD, [0x1A])  # 4 dummy lines per gate
+        self._send_command(SET_GATE_TIME, [0x08])  # 2us per line
+        self._send_command(DATA_ENTRY_MODE_SETTING, [0x03])  # X increment Y increment
+        self._send_command(WRITE_LUT_REGISTER, _lut_partial_update)
+        self._set_memory_area(0, 0, self._w - 1, self._h - 1)
         self._set_memory_pointer(0, 0)
 
-    def send_command(self, command, data=None):
+    def _send_command(self, command, data=None):
         self._dev.write_cmd(bytes([command]))
         if data:
             self._dev.write_data(bytes(data))
 
-    def update(self, image):
+    def show(self, image):
         # TODO: implement partial updates
         assert image.mode == "1"
-        assert image.size == (self.width, self.height)
+        assert image.size == (self._w, self._h)
 
         self._dev.wait_until_idle()
-        self.send_command(WRITE_RAM)
+        self._send_command(WRITE_RAM)
         self._dev.write_data(_IL3820_FramebufferUpdateData(image))
         self._display_frame()
 
     def _display_frame(self):
-        self.send_command(DISPLAY_UPDATE_CONTROL_2, [0xC4])
-        self.send_command(MASTER_ACTIVATION)
-        self.send_command(TERMINATE_FRAME_READ_WRITE)
+        self._send_command(DISPLAY_UPDATE_CONTROL_2, [0xC4])
+        self._send_command(MASTER_ACTIVATION)
+        self._send_command(TERMINATE_FRAME_READ_WRITE)
 
     def _set_memory_area(self, x_start, y_start, x_end, y_end):
         # x point must be the multiple of 8 or the last 3 bits will be ignored
-        self.send_command(SET_RAM_X_ADDRESS_START_END_POSITION, [x_start >> 3, x_end >> 3])
-        self.send_command(SET_RAM_Y_ADDRESS_START_END_POSITION,
-                          [y_start & 0xFF, y_start >> 8, y_end & 0xFF, y_end >> 8])
+        self._send_command(SET_RAM_X_ADDRESS_START_END_POSITION, [x_start >> 3, x_end >> 3])
+        self._send_command(SET_RAM_Y_ADDRESS_START_END_POSITION,
+                           [y_start & 0xFF, y_start >> 8, y_end & 0xFF, y_end >> 8])
 
     def _set_memory_pointer(self, x, y):
         # x point must be the multiple of 8 or the last 3 bits will be ignored
-        self.send_command(SET_RAM_X_ADDRESS_COUNTER, [x >> 3])
-        self.send_command(SET_RAM_Y_ADDRESS_COUNTER, [y & 0xff, y >> 8])
+        self._send_command(SET_RAM_X_ADDRESS_COUNTER, [x >> 3])
+        self._send_command(SET_RAM_Y_ADDRESS_COUNTER, [y & 0xff, y >> 8])
 
     def sleep(self):
-        self.send_command(DEEP_SLEEP_MODE)
+        self._send_command(DEEP_SLEEP_MODE)
 
     def on(self):
         pass
@@ -435,44 +439,43 @@ class IL3820:
 if __name__ == "__main__":
     import os
     import datetime
-    import time
 
     GPIO.setmode(GPIO.BOARD)
-    FRAMES = 100
+    FRAMES = 50
 
     cwd = os.path.dirname(__file__)
     FONT = ImageFont.truetype(cwd + "/Fonts/code2000.ttf", 25)
-    # CONFIG = (128, 64, SH1106)
-    # CONFIG = (128, 64, SSD1306)
-    # DEV = SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22)
-    CONFIG = (128, 296, IL3820)
-    DEV = SpiDevice(device=0, port=0, dc_pin=22, reset_pin=11, busy_pin=18,
-                    max_speed_hz=2000 * 1000)
+    # display = SH1106(SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22), 128, 64)
+    # display = SSD1306(SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22), 128, 64)
+    display = IL3820(SpiDevice(device=0, port=0, dc_pin=22, reset_pin=11, busy_pin=18,
+                               max_speed_hz=2000 * 1000), 128, 296)
 
 
     def main():
-        w, h, driver_class = CONFIG
+        display.on()
 
         print("crate and draw into image")
-        image = Image.new("1", (w, h))
+        image = Image.new("1", display.size)
         draw = ImageDraw.Draw(image)
+
+        draw.rectangle((0, 0, 128, 296), "white")
+        display.show(image)
+        draw.rectangle((0, 0, 128, 296), "black")
+        display.show(image)
+
         now = datetime.datetime.now()
         today_time = now.strftime("%H:%M")
         today_date = now.strftime("%d %b %y")
         draw.text((0, 0), today_time, fill="#fff", font=FONT)
         draw.text((0, 30), today_date, fill="#333", font=FONT)
 
-        print("create spi and display devices")
-        display = driver_class(DEV, w, h)
-        display.on()
-
-        # simple benchmark
+        print("run simple benchmark: %d times" % FRAMES)
         start = time.time()
         for i in range(FRAMES):
             # copy image into display
-            display.update(image)
+            display.show(image)
             time.sleep(0.001)
-            stop = time.time()
+        stop = time.time()
         print("msec/frame", 1000.0 * (stop - start) / FRAMES)
         time.sleep(2)
         display.off()
