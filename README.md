@@ -9,8 +9,11 @@ Pytorinox is **not** a traditional Python library and there is **no** `setup.py`
 It should be sufficient to copy or symlink the helper files you need
 into the directory with your main application.
 
-Most helper file can be run by itself as a test which also demonstrates
-how to use it:
+Most helper files can be run as a test which also demonstrates
+how to use them. Additional documentation can found on 
+[Robert's Real-Simple Raspi Resources](https://raspi.muth.org/) site.
+
+## Helper Overview
 
 * audio_alsa.py  - play back wav sounds via alsa lib
 

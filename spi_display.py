@@ -14,7 +14,7 @@ A lot of the code was inspired by Richard Hull's excellent luma.oled library.
 
 Optional Dependencies:
 spidev
-RPi.GPIO 
+RPi.GPIO
 
 Demo/Test (you will likely need to configure it):
 ./spi_display.py
@@ -388,9 +388,11 @@ class IL3820:
         self._send_command(DRIVER_OUTPUT_CONTROL, [h & 0xff, h >> 8, 0])
         self._send_command(BOOSTER_SOFT_START_CONTROL, [0xD7, 0xD6, 0x9D])
         self._send_command(WRITE_VCOM_REGISTER, [0xa8])  # VCOM 7C
-        self._send_command(SET_DUMMY_LINE_PERIOD, [0x1A])  # 4 dummy lines per gate
+        # 4 dummy lines per gate
+        self._send_command(SET_DUMMY_LINE_PERIOD, [0x1A])
         self._send_command(SET_GATE_TIME, [0x08])  # 2us per line
-        self._send_command(DATA_ENTRY_MODE_SETTING, [0x03])  # X increment Y increment
+        # X increment Y increment
+        self._send_command(DATA_ENTRY_MODE_SETTING, [0x03])
         self._send_command(WRITE_LUT_REGISTER, _lut_partial_update)
         self._set_memory_area(0, 0, self._w - 1, self._h - 1)
         self._set_memory_pointer(0, 0)
@@ -417,7 +419,8 @@ class IL3820:
 
     def _set_memory_area(self, x_start, y_start, x_end, y_end):
         # x point must be the multiple of 8 or the last 3 bits will be ignored
-        self._send_command(SET_RAM_X_ADDRESS_START_END_POSITION, [x_start >> 3, x_end >> 3])
+        self._send_command(SET_RAM_X_ADDRESS_START_END_POSITION, [
+                           x_start >> 3, x_end >> 3])
         self._send_command(SET_RAM_Y_ADDRESS_START_END_POSITION,
                            [y_start & 0xFF, y_start >> 8, y_end & 0xFF, y_end >> 8])
 
@@ -436,6 +439,67 @@ class IL3820:
         pass
 
 
+_MAX7219_NOOP = 0x00
+_MAX7219_DIGIT_0 = 0x01
+_MAX7219_DECODEMODE = 0x09
+_MAX7219_INTENSITY = 0x0A
+_MAX7219_SCANLIMIT = 0x0B
+_MAX7219_SHUTDOWN = 0x0C
+_MAX7219_DISPLAYTEST = 0x0F
+
+
+class MAX7219:
+
+    def __init__(self, dev: SpiDevice, w=8, h=8):
+        self._dev = dev
+        self._w = w
+        self._h = h
+        assert w % 8 == 0
+        assert h % 8 == 0
+        self.size = (w, h)
+        self._num_cascaded = w // 8
+        self._init()
+
+    def _init(self):
+        self._dev.write_data([_MAX7219_SCANLIMIT, 7] * self._num_cascaded)
+        self._dev.write_data([_MAX7219_DECODEMODE, 0] * self._num_cascaded)
+        self._dev.write_data([_MAX7219_DISPLAYTEST, 0] * self._num_cascaded)
+
+    def show(self, image: Image):
+        """image upper left will be shown on the end unit in 
+        cascasding set of units
+        """
+
+        assert image.mode == "1"
+        assert image.size == self.size
+        b = 0
+        # we go one row at a time: pixels across _num_cascaded devices
+        out = bytearray(self._num_cascaded * 2)
+        for n, x in enumerate(image.getdata()):
+            bit = n & 0x7
+            b <<= 1
+            if x > 0:
+                b |= 1
+            if bit == 7:
+                row = n // self._w  # [0:7]
+                col = (n // 8) % 4  # [0:3]
+                out[col * 2] = _MAX7219_DIGIT_0 + row
+                out[col * 2 + 1] = b
+                if col == 3:
+                    self._dev.write_data(out)
+                b = 0
+
+    def on(self):
+        self._dev.write_data([_MAX7219_SHUTDOWN, 1] * self._num_cascaded)
+
+    def off(self):
+        self._dev.write_data([_MAX7219_SHUTDOWN, 0] * self._num_cascaded)
+
+    def brightness(self, level):
+        self._dev.write_data(
+            [_MAX7219_INTENSITY, level >> 4] * self._num_cascaded)
+
+
 if __name__ == "__main__":
     import os
     import datetime
@@ -447,22 +511,35 @@ if __name__ == "__main__":
     FONT = ImageFont.truetype(cwd + "/Fonts/code2000.ttf", 25)
     # display = SH1106(SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22), 128, 64)
     # display = SSD1306(SpiDevice(device=0, port=0, dc_pin=18, reset_pin=22), 128, 64)
-    display = IL3820(SpiDevice(device=0, port=0, dc_pin=22, reset_pin=11, busy_pin=18,
-                               max_speed_hz=2000 * 1000), 128, 296)
+    # display = IL3820(SpiDevice(device=0, port=0, dc_pin=22, reset_pin=11, busy_pin=18,
+    #                           max_speed_hz=2000 * 1000), 128, 296)
+    display = MAX7219(SpiDevice(device=0, port=0,
+                                dc_pin=None, reset_pin=None, max_speed_hz=500 * 1000), 32, 8)
+    print ("dislay size ", display.size)
+    fontsize = display.size[1]
+    if fontsize > 24:
+        fontsize = 24
+    print ("font size ", fontsize)
+    FONT = ImageFont.truetype(cwd + "/Fonts/code2000.ttf", fontsize)
 
+    display.on()
 
     def main():
         display.on()
-
         print("crate and draw into image")
         image = Image.new("1", display.size)
         draw = ImageDraw.Draw(image)
+        w, h = image.size
 
-        draw.rectangle((0, 0, 128, 296), "white")
-        display.show(image)
-        draw.rectangle((0, 0, 128, 296), "black")
-        display.show(image)
+        r = min(*display.size) // 2
+        print("radius", r)
+        for i in range(r + 1):
+            draw.rectangle(((0, 0), image.size), "black")
+            draw.rectangle(((i, i), (w - 1 - i, h - 1 - i)), "white")
+            display.show(image)
+            time.sleep(.5)
 
+        draw.rectangle(((0, 0), image.size), "black")
         now = datetime.datetime.now()
         today_time = now.strftime("%H:%M")
         today_date = now.strftime("%d %b %y")
@@ -479,6 +556,5 @@ if __name__ == "__main__":
         print("msec/frame", 1000.0 * (stop - start) / FRAMES)
         time.sleep(2)
         display.off()
-
 
     main()
