@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # cf.: https://github.com/BoschSensortec/BME280_driver/
 #      https://cdn.sparkfun.com/assets/learn_tutorials/4/1/9/BST-BME280_DS001-10.pdf
+
 import smbus
 import time
 import struct
@@ -45,28 +46,31 @@ BME280_REGISTER_CONTROL = 0xF4
 BME280_REGISTER_CONFIG = 0xF5
 BME280_REGISTER_DATA = 0xF7
 
+MAGIC_BMP280 = 0x58
+MAGIC_BME280 = 0x60
 
-def SetMode(bus, addr, hmode=BME280_OSAMPLE_1, pmode=BME280_OSAMPLE_1, tmode=BME280_OSAMPLE_1,
+
+def SetMode(device, hmode=BME280_OSAMPLE_1, pmode=BME280_OSAMPLE_1, tmode=BME280_OSAMPLE_1,
             standby=BME280_STANDBY_250, filter=BME280_FILTER_OFF):
-    bus.write_byte_data(addr, BME280_REGISTER_CONTROL_HUM, hmode)
+    device.write(BME280_REGISTER_CONTROL_HUM, [hmode])
     time.sleep(0.002)
 
-    bus.write_byte_data(addr, BME280_REGISTER_CONFIG, (standby << 5) | (filter << 2))
+    device.write(BME280_REGISTER_CONFIG, [(standby << 5) | (filter << 2)])
     time.sleep(0.002)
 
     # Select Control measurement register, 0xF4(244)
-    bus.write_byte_data(addr, BME280_REGISTER_CONTROL, (tmode << 5) | (pmode << 2) | 3)
+    device.write(BME280_REGISTER_CONTROL, [(tmode << 5) | (pmode << 2) | 3])
     time.sleep(0.002)
 
 
-def ReadRawMeasurements(bus, addr):
+def ReadRawMeasurements(device):
     # wait for data to become available
-    while (bus.read_byte_data(addr, BME280_REGISTER_STATUS) & 0x08):
+    while (device.read(BME280_REGISTER_STATUS, 1)[0] & 0x08):
         print("#####")
         time.sleep(0.002)
 
     # Read data back from 0xF7(247), 8 bytes
-    data = bus.read_i2c_block_data(addr, BME280_REGISTER_DATA, 8)
+    data = device.read(BME280_REGISTER_DATA, 8)
 
     # Convert pressure and temperature data to 19-bits
     adc_p = (data[0] * 65536 + data[1] * 256 + (data[2] & 0xF0)) / 16
@@ -107,7 +111,7 @@ def ComputeHumidity(adc_h, t_fine, hcal):
     # Humidity offset calculations
     var_H = (t_fine - 76800.0)
     var_H = (adc_h - (h4 * 64.0 + h5 / 16384.0 * var_H)) * (
-                h2 / 65536.0 * (1.0 + h6 / 67108864.0 * var_H * (1.0 + h3 / 67108864.0 * var_H)))
+        h2 / 65536.0 * (1.0 + h6 / 67108864.0 * var_H * (1.0 + h3 / 67108864.0 * var_H)))
     humidity = var_H * (1.0 - h1 * var_H / 524288.0)
     if humidity > 100.0:
         humidity = 100.0
@@ -116,19 +120,19 @@ def ComputeHumidity(adc_h, t_fine, hcal):
     return humidity
 
 
-def ReadCalibrationData(bus, addr):
+def ReadCalibrationData(device):
     # Read data back from 0x88(136), 24 bytes
-    buf = bus.read_i2c_block_data(addr, BME280_REGISTER_DIG_T1, 6)
+    buf = device.read(BME280_REGISTER_DIG_T1, 6)
     tcal = struct.unpack("<Hhh", bytes(buf))
 
-    buf = bus.read_i2c_block_data(addr, BME280_REGISTER_DIG_P1, 18)
+    buf = device.read(BME280_REGISTER_DIG_P1, 18)
     pcal = struct.unpack("<Hhhhhhhhh", bytes(buf))
 
     # Read data back from 0xA1(161), 1 byte
-    h1 = bus.read_byte_data(addr, BME280_REGISTER_DIG_H1)
+    h1 = device.read(BME280_REGISTER_DIG_H1, 1)[0]
 
     # Read data back from 0xE1(225), 7 bytes
-    b1 = bus.read_i2c_block_data(addr, BME280_REGISTER_DIG_H2, 7)
+    b1 = device.read(BME280_REGISTER_DIG_H2, 7)
     # h2, h3, h4, h5, h6 = struct.unpack("<hBh", bytes(b1))
 
     # Convert the data
@@ -149,8 +153,14 @@ def ReadCalibrationData(bus, addr):
     return (h1, h2, h3, h4, h5, h6), pcal, tcal
 
 
-def ReadMeasurements(bus, addr, hcal, pcal, tcal):
-    adc_h, adc_p, adc_t = ReadRawMeasurements(bus, addr)
+def ReadCalibrationData680(device):
+    buf = device.read(0x89, 2) + device.read(0x89, 4)
+    tcal = struct.unpack("<Hhh", bytes(buf))
+    print (tcal)
+
+
+def ReadMeasurements(device, hcal, pcal, tcal):
+    adc_h, adc_p, adc_t = ReadRawMeasurements(device)
     t_fine = ComputeTemp(adc_t, tcal)
     temp = t_fine / 5120.0
 
@@ -160,15 +170,17 @@ def ReadMeasurements(bus, addr, hcal, pcal, tcal):
     return temp, pressure, humidity
 
 
+# This also supports BMP280 (the humidity will read as 0.0)
 class SensorBME280:
 
-    def __init__(self, bus=smbus.SMBus(1), addr=0x76, interval=60):
-        self._bus = bus
+    def __init__(self, device, addr=0x76, interval=60):
+        self._device = device
         self._addr = addr
-        assert bus.read_byte_data(addr, BME280_REGISTER_CHIPID) == 0x60
+        assert device.read(BME280_REGISTER_CHIPID, 1)[
+            0] in [MAGIC_BME280, MAGIC_BMP280]
         self._interval = interval
-        self._hcal, self._pcal, self._tcal = ReadCalibrationData(bus, addr)
-        SetMode(bus, addr)
+        self._hcal, self._pcal, self._tcal = ReadCalibrationData(device)
+        SetMode(device)
         self._last = 0
         self._temp = None
         self._pressure = None
@@ -178,8 +190,8 @@ class SensorBME280:
     def Update(self):
         print("update")
         self._last = time.time()
-        self._temp, self._pressure, self._humidity = ReadMeasurements(self._bus, self._addr, self._hcal, self._pcal,
-                                                                      self._tcal)
+        self._temp, self._pressure, self._humidity = ReadMeasurements(
+            self._device, self._hcal, self._pcal, self._tcal)
 
     def ReadMeasurements(self):
         if self._last + self._interval < time.time():
@@ -194,12 +206,79 @@ class SensorBME280:
         return "%.1f\u00B0C %.0f hPa %.1f%%" % self.ReadMeasurements()
 
 
+class I2CDevice:
+
+    def __init__(self, bus_no=1, addr=0x76, debug=False):
+        """Initialize the I2C device at the 'address' given"""
+        self._bus = smbus.SMBus(bus_no)
+        self._addr = addr
+        self._debug = debug
+
+    def read(self, register, length):
+        """Returns an array of 'length' bytes from the 'register'"""
+        result = self._bus.read_i2c_block_data(self._addr, register, length)
+        if self._debug:
+            print("\t(0x%02x => %s)" % (register, [hex(i) for i in result]))
+        return result
+
+    def write(self, register, values):
+        """Writes an array of 'length' bytes to the 'register'"""
+        for i, value in enumerate(values):
+            self._bus.write_byte_data(self._addr, register + i, value)
+        if self._debug:
+            print("\t(0x%02x <= %s)" %
+                  (register, [hex(i) for i in values[0:]]))
+
+
 if __name__ == "__main__":
-    def main():
-        sensor = SensorBME280()
+    def is_almost_equal(x, y, epsilon=1e-4):
+        return abs(x-y) <= epsilon
+
+    class FakeDevice:
+        def __init__(self, *pairs):
+            r = {}
+            self._responses = r
+            for a, b in pairs:
+                if a not in r:
+                    r[a] = []
+                r[a].append(b)
+
+        def read(self, register, length):
+            #print ("%x %d" % (register, length))
+            x = self._responses[register].pop(0)
+            assert len(x) == length
+            return x
+
+        def write(self, register, values):
+            pass
+
+    def test():
+        device = FakeDevice(
+            (0xd0, [0x60]),
+            (0x88, [0xd9, 0x6e, 0x5d, 0x68, 0x32, 0x00]),
+            (0x8e, [0xfa, 0x8c, 0xb8, 0xd6, 0xd0, 0xb, 0x4f, 0x17,
+                    0xec, 0xff, 0xf9, 0xff, 0x0c, 0x30, 0x20, 0xd1,
+                    0x88, 0x13]),
+            (0xa1, [0x4b]),
+            (0xe1, [0x49, 0x01, 0x00, 0x19, 0x2a, 0x03, 0x1e]),
+            (0xf3, [0x0]),
+            (0xf7, [0x59, 0x6f, 0x0, 0x80, 0x51, 0x0, 0x7f, 0x4b]))
+
+        sensor = SensorBME280(device)
         temp, pressure, humidity = sensor.ReadMeasurements()
+        print("TEST", temp, pressure, humidity)
+        assert is_almost_equal(temp, 22.79161)
+        assert is_almost_equal(pressure, 1012.05817)
+        assert is_almost_equal(humidity, 31.66425)
+
+    def main():
+        device = I2CDevice(addr=0x76, debug=True)
+        sensor = SensorBME280(device)
+        temp, pressure, humidity = sensor.ReadMeasurements()
+
         print("Temperature in Celsius : %.2f C" % temp)
         print("Pressure : %.2f hPa " % pressure)
         print("Relative Humidity : %.2f %%" % humidity)
 
+    test()
     main()
