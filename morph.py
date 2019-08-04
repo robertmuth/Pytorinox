@@ -264,10 +264,15 @@ class DaliClock(object):
     def __init__(self, font: Dict[str, SegmentedImage], font_dim, time_fmt="%H:%M:%S"):
         self._dali_string = DaliString(font, font_dim)
         self._time_fmt = time_fmt
+        # for avoiding recomputes
+        self._last_time_str = ""
+        self._last_time_bitmaps = None
 
     def GetBitmapsForTime(self, secs: float, steps: int, resting: float):
         t1 = time.strftime(self._time_fmt, time.localtime(secs))
         t2 = time.strftime(self._time_fmt, time.localtime(secs + 1.0))
+        if t2 == self._last_time_str:
+            return self._last_time_bitmaps
         assert len(t1) == len(t2)
         # get the fractional part
         f = secs - int(secs)
@@ -277,8 +282,9 @@ class DaliClock(object):
             f = 1.0
         # snap fraction to steps to improve cache utilization
         frac = int(f * steps) / steps
-        return self._dali_string.GetBitmapsForStrings(t1, t2, frac)
-
+        self._last_time_bitmaps = self._dali_string.GetBitmapsForStrings(t1, t2, frac)
+        self._last_time_str = t1
+        return self._last_time_bitmaps
 
 if __name__ == "__main__":
     def ImgToAscii(img: Image) -> str:
