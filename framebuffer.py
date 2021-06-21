@@ -63,6 +63,7 @@ _CONVERTER = {
     ("RGB", 16): _converter_rgb565,
     ("RGB", 24): _converter_no_change,
     ("RGB", 32): _converter_argb,
+    ("RGBA", 32): _converter_no_change,
     # note numpy does not work well with mode="1" images as
     # image.tobytes() loses pixel color info
     ("1", 16): _converter_1_rgb565,
