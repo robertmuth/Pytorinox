@@ -75,8 +75,8 @@ _CONVERTER = {
 class Framebuffer(object):
 
     def __init__(self, device_no: int):
-        self.path = "/dev/fb%d" % device_no
-        config_dir = "/sys/class/graphics/fb%d/" % device_no
+        self.path = f"/dev/fb{device_no}"
+        config_dir = f"/sys/class/graphics/fb{device_no}"
         self.size = tuple(_read_and_convert_to_ints(
             config_dir + "/virtual_size"))
         self.stride = _read_and_convert_to_ints(config_dir + "/stride")[0]
